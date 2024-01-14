@@ -45,6 +45,7 @@ int main() {
     int maxSocket = listening;
 
     set<int> clients;
+    vector<User> loggedInUsers;  // Maintain a vector of loggedInUsers, one for each client
 
     while (true) {
         fd_set copy = master;
@@ -87,6 +88,8 @@ int main() {
                 if (clientSocket > maxSocket) {
                     maxSocket = clientSocket;
                 }
+
+                loggedInUsers.push_back(User("", "", "", "", {}, 0));  // Add a new loggedInUser for the new client
             }
         }
 
@@ -103,17 +106,21 @@ int main() {
                     cout << "Client disconnected" << endl;
                     close(clientSocket);
                     it = clients.erase(it);
-                    break;
+                    loggedInUsers.erase(loggedInUsers.begin() + distance(clients.begin(), it));  // Remove corresponding loggedInUser
+                    continue;  // Skip the rest of the loop iteration
                 }
 
-                User newUser("", "", "", "", {}, 0); // Declare a dummy user object
-                User loggedInUser("", "", "", "", {}, 0);  // Initialize with empty values
-              
-              string command(buffer);
-              if (command.substr(0, 4) == "EXIT") {
-                  cout << "Received EXIT command. Closing server." << endl;
-                  break;  // Exit the server loop
-              }
+                User& loggedInUser = loggedInUsers[distance(clients.begin(), it)];  // Get the loggedInUser for this client
+
+                string command(buffer);
+                if (command.substr(0, 4) == "EXIT") {
+                    cout << "Received EXIT command. Closing connection." << endl;
+                    close(clientSocket);
+                    it = clients.erase(it);
+                    loggedInUsers.erase(loggedInUsers.begin() + distance(clients.begin(), it));  // Remove corresponding loggedInUser
+                    continue;  // Skip the rest of the loop iteration
+
+                }
               else if (command.substr(0, 8) == "REGISTER") {
                       memset(buffer, 0, 4096);
                       bytesReceived = recv(clientSocket, buffer, 4096, 0);
