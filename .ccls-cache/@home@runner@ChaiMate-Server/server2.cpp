@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <map>
 
 #include "user.h"
 
@@ -15,6 +18,10 @@ using namespace std;
 
 int main() {
     cout << "ChaiMate Server has started" << endl;
+
+  set<int> pendingRequests;
+  map<int, string> requesters;
+  map<int, vector<int>> acceptedRequests;
 
     int listening = socket(AF_INET, SOCK_STREAM, 0);
     if (listening == -1) {
@@ -43,6 +50,7 @@ int main() {
     int maxSocket = listening;
 
     set<int> clients;
+    vector<User> loggedInUsers;  // Maintain a vector of loggedInUsers, one for each client
 
     while (true) {
         fd_set copy = master;
@@ -85,6 +93,8 @@ int main() {
                 if (clientSocket > maxSocket) {
                     maxSocket = clientSocket;
                 }
+
+                loggedInUsers.push_back(User("", "", "", "", {}, 0));  // Add a new loggedInUser for the new client
             }
         }
 
@@ -101,17 +111,21 @@ int main() {
                     cout << "Client disconnected" << endl;
                     close(clientSocket);
                     it = clients.erase(it);
-                    break;;
+                    loggedInUsers.erase(loggedInUsers.begin() + distance(clients.begin(), it));  // Remove corresponding loggedInUser
+                    continue;  // Skip the rest of the loop iteration
                 }
 
-                User newUser("", "", "", "", {}, 0); // Declare a dummy user object
-                User loggedInUser("", "", "", "", {}, 0);  // Initialize with empty values
-              
-              string command(buffer);
-              if (command.substr(0, 4) == "EXIT") {
-                  cout << "Received EXIT command. Closing server." << endl;
-                  break;  // Exit the server loop
-              }
+                User& loggedInUser = loggedInUsers[distance(clients.begin(), it)];  // Get the loggedInUser for this client
+
+                string command(buffer);
+                if (command.substr(0, 4) == "EXIT") {
+                    cout << "Received EXIT command. Closing connection." << endl;
+                    close(clientSocket);
+                    it = clients.erase(it);
+                    loggedInUsers.erase(loggedInUsers.begin() + distance(clients.begin(), it));  // Remove corresponding loggedInUser
+                    continue;  // Skip the rest of the loop iteration
+
+                }
               else if (command.substr(0, 8) == "REGISTER") {
                       memset(buffer, 0, 4096);
                       bytesReceived = recv(clientSocket, buffer, 4096, 0);
@@ -166,15 +180,49 @@ int main() {
                   }
               }
 
-                else if (command.substr(0, 4) == "SHOW") {
-                        if (loggedInUser.getName() != "") {
-                            std::string userDetails = loggedInUser.getUserDetails();
-                            send(clientSocket, userDetails.c_str(), userDetails.size() + 1, 0);
-                        } else {
-                            cerr << "Error: User not logged in." << endl;
-                        }
-                    }
+                                else if (command.substr(0, 7) == "REQUEST") {
+                                    if (loggedInUser.getName() != "") {
+                                        // Notify all other clients about the request
+                                        string requestMessage = loggedInUser.getName() + " is looking for a ChaiMate, would you like to accept: Yes/No";
+                                        for (int otherSocket : clients) {
+                                            if (otherSocket != clientSocket) {
+                                                send(otherSocket, requestMessage.c_str(), requestMessage.size() + 1, 0);
+                                            }
+                                        }
 
+                                        // Receive responses from other clients
+                                        vector<int> acceptedClients;
+                                        for (int otherSocket : clients) {
+                                            if (otherSocket != clientSocket) {
+                                                memset(buffer, 0, 4096);
+                                                bytesReceived = recv(otherSocket, buffer, 4096, 0);
+                                                if (bytesReceived > 0) {
+                                                    string response(buffer);
+                                                    if (response.find("Yes") == 0) {  // Check if the response starts with "Yes"
+                                                        // Add the client to the list of accepted clients
+                                                        acceptedClients.push_back(otherSocket);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Inform the original requester about the accepted requests
+                                        if (!acceptedClients.empty()) {
+                                            send(clientSocket, "Your request has been accepted.", 30, 0);
+
+                                            // Provide a sample location and time to all accepted clients
+                                            string locationMessage = "Tasty Spot at 4:30 PM";
+                                            for (int acceptedSocket : acceptedClients) {
+                                                send(acceptedSocket, locationMessage.c_str(), locationMessage.size() + 1, 0);
+                                            }
+                                        } else {
+                                            // If no requests were accepted, inform the original requester
+                                            // Comment out the line below to prevent notifying the requester about denial
+                                            // send(clientSocket, "Your request was not accepted.", 30, 0);
+                                        }
+                                    }
+                                }
+                                
                   else {
                   cerr << "Invalid command from client." << endl;
                     continue;
